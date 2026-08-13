@@ -11,6 +11,11 @@ serial_number = "vial:f64c2b3c:000001"
 chip = "nrf52840"
 usb_enable = true
 
+[host]
+vial_enabled = true
+# Vial lock解除用。Central側の右手ホーム寄りキー (row=0,col=7/8)
+unlock_keys = [[0, 7], [0, 8]]
+
 [layout]
 rows = 4
 cols = 13
@@ -154,7 +159,7 @@ spi.miso = "P0_04"
 spi.cs = "P0_09"
 motion = "P0_02"
 cpi = 1000
-invert_x = true
+invert_x = false
 invert_y = true
 smart_mode = true
 

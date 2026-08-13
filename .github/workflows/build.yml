@@ -7,54 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    env:
-      RUST_MIN_STACK: 67108864
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install firmware tools
-        run: |
-          rustup component add llvm-tools-preview
-          cargo install cargo-binutils --version 0.4.0 --locked
-          cargo install cargo-hex-to-uf2 --version 0.1.2 --locked
-
-      - name: Install flip-link
-        run: cargo install flip-link --locked
-
-      - name: Build central firmware
-        run: cargo build --release --bin central
-
-      - name: Build peripheral firmware
-        run: cargo build --release --bin peripheral
-
-      - name: Generate central UF2
-        run: |
-          cargo objcopy --release --bin central -- -O ihex Cygnus-M-RMK-central.hex
-          cargo hex-to-uf2 \
-            --input-path Cygnus-M-RMK-central.hex \
-            --output-path Cygnus-M-RMK-central.uf2 \
-            --family nrf52840
-
-      - name: Generate peripheral UF2
-        run: |
-          cargo objcopy --release --bin peripheral -- -O ihex Cygnus-M-RMK-peripheral.hex
-          cargo hex-to-uf2 \
-            --input-path Cygnus-M-RMK-peripheral.hex \
-            --output-path Cygnus-M-RMK-peripheral.uf2 \
-            --family nrf52840
-
-      - name: Upload UF2 firmware
-        uses: actions/upload-artifact@v4
-        with:
-          name: Cygnus-M-RMK-uf2
-          path: |
-            Cygnus-M-RMK-central.uf2
-            Cygnus-M-RMK-peripheral.uf2
-          if-no-files-found: error
-          retention-days: 30
+    uses: rmk-rs/rmk/.github/workflows/user_build.yml@main
+    with:
+      keyboard_toml_path: "keyboard.toml"
+      vial_json_path: "vial.json"

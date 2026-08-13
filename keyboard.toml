@@ -127,7 +127,7 @@ battery_adc_pin = "vddh"
 adc_divider_measured = 2000
 adc_divider_total = 2806
 default_tx_power = 0
-use_2m_phy = true
+ble_use_2m_phy = true
 
 [split]
 connection = "ble"

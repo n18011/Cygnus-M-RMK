@@ -85,6 +85,9 @@ const SHUTTER_SMART_THRESHOLD: u16 = 45;
 const SMART_MODE_ENABLE: u8 = 0x00;
 const SMART_MODE_DISABLE: u8 = 0x80;
 
+// This matches the `scroll` layer order in the project's keyboard.toml.
+const SCROLL_LAYER: u8 = 4;
+
 const PMW3610_DATA_SIZE_BITS: usize = 12;
 
 // Timing constants
@@ -609,12 +612,29 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
     }
 
     async fn generate_report(&self, x: i16, y: i16) {
-        let mouse_report = MouseReport {
-            buttons: 0,
-            x: x.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-            y: y.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-            wheel: 0,
-            pan: 0,
+        // Layer state is updated by the keyboard processor, so read it for
+        // each sensor report. Keep the borrow out of the async send path.
+        let scroll_active = self.keymap.borrow().get_activated_layer() == SCROLL_LAYER;
+        let clamp_axis = |value: i16| value.clamp(i8::MIN as i16, i8::MAX as i16) as i8;
+
+        let mouse_report = if scroll_active {
+            MouseReport {
+                buttons: 0,
+                x: 0,
+                y: 0,
+                // Cursor Y is inverted in keyboard.toml, so negate it to
+                // preserve the intuitive "move ball up = scroll up" mapping.
+                wheel: clamp_axis(-y),
+                pan: clamp_axis(x),
+            }
+        } else {
+            MouseReport {
+                buttons: 0,
+                x: clamp_axis(x),
+                y: clamp_axis(y),
+                wheel: 0,
+                pan: 0,
+            }
         };
         self.send_report(Report::MouseReport(mouse_report)).await;
     }

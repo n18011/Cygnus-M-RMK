@@ -31,10 +31,11 @@ matrix_map = """
 # sensor binding: clockwise = down, counter-clockwise = up.
 [[layer]]
 name = "base"
+# JIS `;`: tap sends `;`, hold activates the trackball scroll layer.
 keys = """
 LT(6,Escape) Q W E R T Y U I O P Backspace
 
-Tab A S D F G MouseBtn3 Up H J K LT(4,L) LT(5,Minus) Enter
+Tab A S D F G MouseBtn3 Up H J K LT(4,L) LT(scroll,Semicolon) Enter
 
 LShift Z X C V B Delete Down N M Comma Dot Slash RShift
 
@@ -81,6 +82,7 @@ _ _ _ _ _ _ _ _ _ _ _
 
 [[layer]]
 name = "scroll"
+# The PMW3610 processor converts trackball X/Y to wheel/pan while this layer is active.
 keys = """
 _ _ _ _ _ _ _ _ _ _ _ _
 

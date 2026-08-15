@@ -1,0 +1,114 @@
+[tasks.install-llvm-tools]
+install_crate = { rustup_component_name = "llvm-tools-preview" }
+
+[tasks.flip-link]
+install_crate = { crate_name = "flip-link", binary = "flip-link", test_arg = ["-h"] }
+
+[tasks.build]
+command = "cargo"
+args = ["build", "--release"]
+dependencies = ["install-llvm-tools", "flip-link"]
+
+[tasks.objcopy-central]
+install_crate = { crate_name = "cargo-binutils", binary = "cargo", test_arg = [
+    "objcopy",
+    "--help",
+] }
+command = "cargo"
+args = [
+    "objcopy",
+    "--release",
+    "--bin",
+    "central",
+    "--",
+    "-O",
+    "ihex",
+    "Cygnus-M-RMK-central.hex",
+]
+dependencies = ["build"]
+
+[tasks.objcopy-peripheral]
+install_crate = { crate_name = "cargo-binutils", binary = "cargo", test_arg = [
+    "objcopy",
+    "--help",
+] }
+command = "cargo"
+args = [
+    "objcopy",
+    "--release",
+    "--bin",
+    "peripheral",
+    "--",
+    "-O",
+    "ihex",
+    "Cygnus-M-RMK-peripheral.hex",
+]
+dependencies = ["build"]
+
+[tasks.bin-central]
+command = "cargo"
+args = [
+    "objcopy",
+    "--release",
+    "--bin",
+    "central",
+    "--",
+    "-O",
+    "binary",
+    "Cygnus-M-RMK-central.bin",
+]
+dependencies = ["build"]
+
+[tasks.bin-peripheral]
+command = "cargo"
+args = [
+    "objcopy",
+    "--release",
+    "--bin",
+    "peripheral",
+    "--",
+    "-O",
+    "binary",
+    "Cygnus-M-RMK-peripheral.bin",
+]
+dependencies = ["build"]
+
+[tasks.bin]
+dependencies = ["bin-central", "bin-peripheral"]
+
+[tasks.uf2-central]
+install_crate = { crate_name = "cargo-hex-to-uf2", binary = "cargo", test_arg = [
+    "hex-to-uf2",
+    "--help",
+] }
+command = "cargo"
+args = [
+    "hex-to-uf2",
+    "--input-path",
+    "Cygnus-M-RMK-central.hex",
+    "--output-path",
+    "Cygnus-M-RMK-central.uf2",
+    "--family",
+    "nrf52840",
+]
+dependencies = ["objcopy-central"]
+
+[tasks.uf2-peripheral]
+install_crate = { crate_name = "cargo-hex-to-uf2", binary = "cargo", test_arg = [
+    "hex-to-uf2",
+    "--help",
+] }
+command = "cargo"
+args = [
+    "hex-to-uf2",
+    "--input-path",
+    "Cygnus-M-RMK-peripheral.hex",
+    "--output-path",
+    "Cygnus-M-RMK-peripheral.uf2",
+    "--family",
+    "nrf52840",
+]
+dependencies = ["objcopy-peripheral"]
+
+[tasks.uf2]
+dependencies = ["uf2-central", "uf2-peripheral"]

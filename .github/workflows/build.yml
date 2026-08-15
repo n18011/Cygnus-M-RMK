@@ -1,13 +1,59 @@
 name: Build RMK firmware
+
 on:
-  workflow_dispatch:
   push:
-    paths:
-      - "**"
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
-    uses: rmk-rs/rmk/.github/workflows/user_build.yml@main
-    with:
-      keyboard_toml_path: "keyboard.toml"
-      vial_json_path: "vial.json"
+    runs-on: ubuntu-latest
+    env:
+      RUST_MIN_STACK: 67108864
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - name: Install firmware tools
+        run: cargo binstall cargo-make cargo-binutils cargo-hex-to-uf2 flip-link -y
+
+      - name: Build firmware and generate UF2/HEX
+        run: cargo make uf2 --release
+
+      - name: Stage ELF firmware
+        env:
+          PROJECT_NAME: Cygnus-M-RMK
+        run: |
+          for bin in central peripheral; do
+            cp "target/thumbv7em-none-eabihf/release/$bin" "${PROJECT_NAME}-${bin}.elf"
+          done
+
+      - name: Validate firmware files
+        run: file Cygnus-M-RMK-*.uf2 Cygnus-M-RMK-*.hex Cygnus-M-RMK-*.elf
+
+      - name: Upload UF2 artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Cygnus-M-RMK-firmware_uf2
+          path: Cygnus-M-RMK-*.uf2
+          if-no-files-found: error
+
+      - name: Upload HEX artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Cygnus-M-RMK-firmware_hex
+          path: Cygnus-M-RMK-*.hex
+          if-no-files-found: error
+
+      - name: Upload ELF artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Cygnus-M-RMK-firmware_elf
+          path: Cygnus-M-RMK-*.elf
+          if-no-files-found: error

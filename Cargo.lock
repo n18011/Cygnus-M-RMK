@@ -1779,8 +1779,6 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "rmk"
 version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a301e62e9d2d9f2e44922c121a605aa064f2ef96c5d6f3c4d5fb9e177205186"
 dependencies = [
  "bitfield-struct",
  "bt-hci",

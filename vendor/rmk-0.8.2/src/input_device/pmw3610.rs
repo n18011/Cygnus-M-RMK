@@ -91,6 +91,12 @@ const PMW3610_DATA_SIZE_BITS: usize = 12;
 const RESET_DELAY_MS: u64 = 10;
 const INIT_OBSERVATION_DELAY_MS: u64 = 10;
 const CLOCK_ON_DELAY_US: u64 = 300;
+// Leave enough executor time for BLE notifications while still sampling the
+// sensor at 200 Hz. The previous 500 us interval could monopolize the report
+// channel when the cursor was moving continuously.
+const DEFAULT_POLL_INTERVAL_US: u64 = 5_000;
+// Bound the amount of queued work one sensor report can coalesce at once.
+const MAX_COALESCED_MOTION_REPORTS: usize = 4;
 
 // SPI timing constants (from PMW3610 datasheet)
 const T_NCS_SCLK_US: u64 = 1;
@@ -469,7 +475,7 @@ where
         Self {
             sensor: Pmw3610::new(spi, cs, motion_gpio, config),
             init_state: InitState::Pending,
-            poll_interval: Duration::from_micros(500),
+            poll_interval: Duration::from_micros(DEFAULT_POLL_INTERVAL_US),
         }
     }
 
@@ -587,15 +593,19 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
         Self { keymap }
     }
 
-    /// A report containing only relative X/Y motion can be coalesced safely.
+    /// A report containing relative X/Y motion can be coalesced safely when
+    /// its button state matches the report it is merged into.
     ///
     /// Mouse-button releases are represented by an otherwise empty report, so
     /// zero-motion reports must not be discarded here.
     fn is_motion_report(report: &MouseReport) -> bool {
-        report.buttons == 0
-            && report.wheel == 0
-            && report.pan == 0
-            && (report.x != 0 || report.y != 0)
+        report.wheel == 0 && report.pan == 0 && (report.x != 0 || report.y != 0)
+    }
+
+    fn can_merge_motion_reports(current: &MouseReport, queued: &MouseReport) -> bool {
+        Self::is_motion_report(current)
+            && Self::is_motion_report(queued)
+            && current.buttons == queued.buttons
     }
 
     /// Combine older motion into the report that is about to be sent.
@@ -608,14 +618,19 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
         current.y = current.y.saturating_add(older.y);
     }
 
-    async fn generate_report(&self, x: i16, y: i16) {
-        let mouse_report = MouseReport {
-            buttons: 0,
+    fn build_motion_report(x: i16, y: i16, buttons: u8) -> MouseReport {
+        MouseReport {
+            buttons,
             x: x.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
             y: y.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
             wheel: 0,
             pan: 0,
-        };
+        }
+    }
+
+    async fn generate_report(&self, x: i16, y: i16) {
+        let buttons = self.keymap.borrow().mouse_buttons();
+        let mouse_report = Self::build_motion_report(x, y, buttons);
         self.send_report(Report::MouseReport(mouse_report)).await;
     }
 }
@@ -650,14 +665,20 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
             return;
         };
 
+        // The report may wait while the output channel is full. Refresh the
+        // state before queueing it so a delayed motion report cannot restore
+        // a button after the key has already been released.
+        pending.buttons = self.keymap.borrow().mouse_buttons();
+
         // BLE can consume reports much more slowly than PMW3610 produces
         // them. Remove and merge queued motion reports so the channel never
-        // becomes a FIFO of stale cursor positions. Reports carrying button,
-        // wheel, or pan state are left untouched to preserve HID semantics.
-        loop {
+        // becomes a FIFO of stale cursor positions. Reports are only merged
+        // when their button state matches, preserving HID state transitions.
+        let mut merged_reports = 0;
+        while merged_reports < MAX_COALESCED_MOTION_REPORTS {
             let has_queued_motion = matches!(
                 KEYBOARD_REPORT_CHANNEL.try_peek(),
-                Ok(Report::MouseReport(ref queued)) if Self::is_motion_report(queued)
+                Ok(Report::MouseReport(ref queued)) if Self::can_merge_motion_reports(&pending, queued)
             );
 
             if !has_queued_motion {
@@ -665,8 +686,9 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
             }
 
             match KEYBOARD_REPORT_CHANNEL.try_receive() {
-                Ok(Report::MouseReport(queued)) if Self::is_motion_report(&queued) => {
+                Ok(Report::MouseReport(queued)) if Self::can_merge_motion_reports(&pending, &queued) => {
                     Self::merge_motion_report(&mut pending, queued);
+                    merged_reports += 1;
                 }
                 Ok(other) => {
                     // The queue changed between peek and receive. Put the
@@ -679,6 +701,8 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
             }
         }
 
+        pending.buttons = self.keymap.borrow().mouse_buttons();
+
         KEYBOARD_REPORT_CHANNEL
             .send(Report::MouseReport(pending))
             .await;
@@ -686,5 +710,88 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
 
     fn get_keymap(&self) -> &RefCell<KeyMap<'a, ROW, COL, NUM_LAYER, NUM_ENCODER>> {
         self.keymap
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::cell::RefCell;
+
+    use embassy_futures::block_on;
+    use rmk_types::action::KeyAction;
+
+    use super::*;
+    use crate::config::{BehaviorConfig, PositionalConfig};
+    use crate::hid::Report;
+    use crate::keymap::KeyMap;
+
+    fn motion(buttons: u8, x: i8, y: i8) -> MouseReport {
+        MouseReport {
+            buttons,
+            x,
+            y,
+            wheel: 0,
+            pan: 0,
+        }
+    }
+
+    #[test]
+    fn motion_with_held_button_is_still_coalescible() {
+        assert!(Pmw3610Processor::<1, 1, 1, 0>::is_motion_report(&motion(1, 3, -2)));
+    }
+
+    #[test]
+    fn motion_reports_only_merge_with_matching_button_state() {
+        let current = motion(1, 2, -1);
+        let same_state = motion(1, 4, 3);
+        let after_release = motion(0, 4, 3);
+
+        assert!(Pmw3610Processor::<1, 1, 1, 0>::can_merge_motion_reports(
+            &current,
+            &same_state,
+        ));
+        assert!(!Pmw3610Processor::<1, 1, 1, 0>::can_merge_motion_reports(
+            &current,
+            &after_release,
+        ));
+    }
+
+    #[test]
+    fn motion_report_keeps_mouse_button_state() {
+        assert_eq!(
+            Pmw3610Processor::<1, 1, 1, 0>::build_motion_report(12, -4, 1),
+            motion(1, 12, -4),
+        );
+    }
+
+    #[test]
+    fn generated_motion_report_uses_shared_mouse_button_state() {
+        let actions = Box::leak(Box::new([[[KeyAction::No]]]));
+        let behavior = Box::leak(Box::new(BehaviorConfig::default()));
+        let positional_config = Box::leak(Box::new(PositionalConfig::<1, 1>::default()));
+        let keymap = Box::leak(Box::new(RefCell::new(block_on(KeyMap::<1, 1, 1, 0>::new(
+            actions,
+            None,
+            behavior,
+            positional_config,
+        )))));
+        keymap.borrow_mut().set_mouse_buttons(1);
+
+        let processor = Pmw3610Processor::new(keymap);
+        block_on(async {
+            KEYBOARD_REPORT_CHANNEL.clear();
+            processor.generate_report(12, -4).await;
+
+            match KEYBOARD_REPORT_CHANNEL.try_receive() {
+                Ok(Report::MouseReport(report)) => assert_eq!(report, motion(1, 12, -4)),
+                other => panic!("expected a mouse report, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn motion_coalescing_is_bounded() {
+        assert!(DEFAULT_POLL_INTERVAL_US >= 5_000);
+        assert!(MAX_COALESCED_MOTION_REPORTS <= 4);
     }
 }

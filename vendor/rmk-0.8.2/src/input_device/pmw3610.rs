@@ -97,6 +97,10 @@ const CLOCK_ON_DELAY_US: u64 = 300;
 const DEFAULT_POLL_INTERVAL_US: u64 = 5_000;
 // Bound the amount of queued work one sensor report can coalesce at once.
 const MAX_COALESCED_MOTION_REPORTS: usize = 4;
+// keyboard.toml layers: base=0, function=1, arrow=2, mouse=3, scroll=4.
+const SCROLL_LAYER: u8 = 4;
+// Match the ZMK PMW3610 driver used by Cygnus-M.
+const SCROLL_TICK: i32 = 64;
 
 // SPI timing constants (from PMW3610 datasheet)
 const T_NCS_SCLK_US: u64 = 1;
@@ -583,6 +587,10 @@ where
 pub struct Pmw3610Processor<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_ENCODER: usize> {
     /// Reference to the keymap
     keymap: &'a RefCell<KeyMap<'a, ROW, COL, NUM_LAYER, NUM_ENCODER>>,
+    /// Accumulated sensor movement while the scroll layer is active.
+    scroll_delta_x: i32,
+    scroll_delta_y: i32,
+    scrolling: bool,
 }
 
 impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_ENCODER: usize>
@@ -590,7 +598,12 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
 {
     /// Create a new PMW3610 processor with default settings
     pub fn new(keymap: &'a RefCell<KeyMap<'a, ROW, COL, NUM_LAYER, NUM_ENCODER>>) -> Self {
-        Self { keymap }
+        Self {
+            keymap,
+            scroll_delta_x: 0,
+            scroll_delta_y: 0,
+            scrolling: false,
+        }
     }
 
     /// A report containing relative X/Y motion can be coalesced safely when
@@ -628,10 +641,45 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
         }
     }
 
+    /// Convert accumulated PMW3610 movement to a HID scroll report.
+    ///
+    /// The polarity matches the ZMK Cygnus-M driver: positive sensor Y emits
+    /// negative vertical wheel movement, and positive sensor X emits positive
+    /// horizontal wheel movement.
+    fn scroll_report_for_delta(dx: i32, dy: i32, buttons: u8) -> Option<MouseReport> {
+        let (wheel, pan) = if dy.abs() > SCROLL_TICK {
+            (if dy > 0 { -1 } else { 1 }, 0)
+        } else if dx.abs() > SCROLL_TICK {
+            (0, if dx > 0 { 1 } else { -1 })
+        } else {
+            return None;
+        };
+
+        Some(MouseReport {
+            buttons,
+            x: 0,
+            y: 0,
+            wheel,
+            pan,
+        })
+    }
+
     async fn generate_report(&self, x: i16, y: i16) {
         let buttons = self.keymap.borrow().mouse_buttons();
         let mouse_report = Self::build_motion_report(x, y, buttons);
         self.send_report(Report::MouseReport(mouse_report)).await;
+    }
+
+    async fn generate_scroll_report(&mut self, x: i16, y: i16) {
+        self.scroll_delta_x = self.scroll_delta_x.saturating_add(i32::from(x));
+        self.scroll_delta_y = self.scroll_delta_y.saturating_add(i32::from(y));
+
+        let buttons = self.keymap.borrow().mouse_buttons();
+        if let Some(mouse_report) = Self::scroll_report_for_delta(self.scroll_delta_x, self.scroll_delta_y, buttons) {
+            self.scroll_delta_x = 0;
+            self.scroll_delta_y = 0;
+            self.send_report(Report::MouseReport(mouse_report)).await;
+        }
     }
 }
 
@@ -652,7 +700,20 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                     }
                 }
 
-                self.generate_report(x, y).await;
+                let scroll_layer_active = self.keymap.borrow().get_activated_layer() == SCROLL_LAYER;
+                if scroll_layer_active {
+                    if !self.scrolling {
+                        self.scroll_delta_x = 0;
+                        self.scroll_delta_y = 0;
+                    }
+                    self.scrolling = true;
+                    self.generate_scroll_report(x, y).await;
+                } else {
+                    self.scrolling = false;
+                    self.scroll_delta_x = 0;
+                    self.scroll_delta_y = 0;
+                    self.generate_report(x, y).await;
+                }
                 ProcessResult::Stop
             }
             _ => ProcessResult::Continue(event),
@@ -735,6 +796,16 @@ mod tests {
         }
     }
 
+    fn scroll(buttons: u8, wheel: i8, pan: i8) -> MouseReport {
+        MouseReport {
+            buttons,
+            x: 0,
+            y: 0,
+            wheel,
+            pan,
+        }
+    }
+
     #[test]
     fn motion_with_held_button_is_still_coalescible() {
         assert!(Pmw3610Processor::<1, 1, 1, 0>::is_motion_report(&motion(1, 3, -2)));
@@ -793,5 +864,80 @@ mod tests {
     fn motion_coalescing_is_bounded() {
         assert!(DEFAULT_POLL_INTERVAL_US >= 5_000);
         assert!(MAX_COALESCED_MOTION_REPORTS <= 4);
+    }
+
+    #[test]
+    fn scroll_motion_matches_zmk_axis_polarity() {
+        assert_eq!(
+            Pmw3610Processor::<1, 1, 1, 0>::scroll_report_for_delta(0, 65, 1),
+            Some(scroll(1, -1, 0)),
+        );
+        assert_eq!(
+            Pmw3610Processor::<1, 1, 1, 0>::scroll_report_for_delta(0, -65, 1),
+            Some(scroll(1, 1, 0)),
+        );
+        assert_eq!(
+            Pmw3610Processor::<1, 1, 1, 0>::scroll_report_for_delta(65, 0, 1),
+            Some(scroll(1, 0, 1)),
+        );
+        assert_eq!(
+            Pmw3610Processor::<1, 1, 1, 0>::scroll_report_for_delta(-65, 0, 1),
+            Some(scroll(1, 0, -1)),
+        );
+    }
+
+    #[test]
+    fn scroll_motion_waits_for_tick_and_prioritizes_vertical() {
+        assert_eq!(
+            Pmw3610Processor::<1, 1, 1, 0>::scroll_report_for_delta(64, 64, 0),
+            None,
+        );
+        assert_eq!(
+            Pmw3610Processor::<1, 1, 1, 0>::scroll_report_for_delta(65, 65, 0),
+            Some(scroll(0, -1, 0)),
+        );
+    }
+
+    #[test]
+    fn process_uses_scroll_layer_for_trackball() {
+        let actions = Box::leak(Box::new([[[KeyAction::No; 1]; 1]; 5]));
+        let behavior = Box::leak(Box::new(BehaviorConfig::default()));
+        let positional_config = Box::leak(Box::new(PositionalConfig::<1, 1>::default()));
+        let keymap = Box::leak(Box::new(RefCell::new(block_on(KeyMap::<1, 1, 5, 0>::new(
+            actions,
+            None,
+            behavior,
+            positional_config,
+        )))));
+        keymap.borrow_mut().activate_layer(SCROLL_LAYER);
+        keymap.borrow_mut().set_mouse_buttons(1);
+
+        let mut processor = Pmw3610Processor::new(keymap);
+        let event = Event::Joystick([
+            AxisEvent {
+                typ: AxisValType::Rel,
+                axis: Axis::X,
+                value: 65,
+            },
+            AxisEvent {
+                typ: AxisValType::Rel,
+                axis: Axis::Y,
+                value: 0,
+            },
+            AxisEvent {
+                typ: AxisValType::Rel,
+                axis: Axis::Z,
+                value: 0,
+            },
+        ]);
+
+        block_on(async {
+            KEYBOARD_REPORT_CHANNEL.clear();
+            assert!(matches!(processor.process(event).await, ProcessResult::Stop));
+            match KEYBOARD_REPORT_CHANNEL.try_receive() {
+                Ok(Report::MouseReport(report)) => assert_eq!(report, scroll(1, 0, 1)),
+                other => panic!("expected a scroll report, got {other:?}"),
+            }
+        });
     }
 }

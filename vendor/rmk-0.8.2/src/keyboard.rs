@@ -1696,6 +1696,12 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                 self.mouse_report.pan = pan;
             }
 
+            // Pointing-device processors generate complete HID mouse reports.
+            // Keep their button field in sync with button actions handled here.
+            self.keymap
+                .borrow_mut()
+                .set_mouse_buttons(self.mouse_report.buttons);
+
             if !matches!(key, KeyCode::MouseAccel0 | KeyCode::MouseAccel1 | KeyCode::MouseAccel2) {
                 // Send mouse report only for movement and wheel keys
                 self.send_mouse_report().await;
@@ -2575,6 +2581,26 @@ mod test {
                 // Release No key
                 keyboard.process_inner(KeyboardEvent::key(4, 3, false)).await;
                 assert_eq!(keyboard.held_keycodes[0], KeyCode::No);
+            };
+            block_on(main);
+        }
+
+        #[test]
+        fn test_mouse_button_state_is_shared_with_pointing_device() {
+            let main = async {
+                let mut keyboard = create_test_keyboard();
+                let pos = KeyboardEventPos::Key(KeyPos { row: 4, col: 3 });
+                keyboard.keymap.borrow_mut().set_action_at(
+                    pos,
+                    0,
+                    KeyAction::Single(Action::Key(KeyCode::MouseBtn1)),
+                );
+
+                keyboard.process_inner(KeyboardEvent::key(4, 3, true)).await;
+                assert_eq!(keyboard.keymap.borrow().mouse_buttons(), 1);
+
+                keyboard.process_inner(KeyboardEvent::key(4, 3, false)).await;
+                assert_eq!(keyboard.keymap.borrow().mouse_buttons(), 0);
             };
             block_on(main);
         }

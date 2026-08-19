@@ -23,7 +23,7 @@ unlock_keys = [[0, 7], [0, 8]]
 enabled = true
 start_addr = 0xA0000
 num_sectors = 32
-clear_storage = true
+clear_storage = false
 clear_layout = false
 
 [layout]

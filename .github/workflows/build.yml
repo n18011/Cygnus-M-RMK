@@ -13,8 +13,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+      - name: Verify native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          find_libclang() {
+            find /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu \
+              -maxdepth 1 \
+              \( -name 'libclang.so*' -o -name 'libclang-[0-9]*.so*' \) \
+              -print -quit 2>/dev/null || true
+          }
+
+          clang_path="$(command -v clang || true)"
+          libclang_file="$(find_libclang)"
+
+          if [[ -z "$clang_path" || -z "$libclang_file" ]]; then
+            packages=()
+            [[ -n "$clang_path" ]] || packages+=(clang)
+            [[ -n "$libclang_file" ]] || packages+=(libclang-dev)
+
+            echo "Installing missing native dependencies: ${packages[*]}"
+            apt_options=(
+              -o Acquire::Retries=3
+              -o Acquire::http::Timeout=30
+              -o Acquire::https::Timeout=30
+            )
+            timeout 180s sudo apt-get "${apt_options[@]}" update
+            timeout 180s sudo apt-get "${apt_options[@]}" install \
+              --no-install-recommends -y "${packages[@]}"
+
+            clang_path="$(command -v clang || true)"
+            libclang_file="$(find_libclang)"
+          fi
+
+          test -n "$clang_path"
+          test -n "$libclang_file"
+          "$clang_path" --version
+          echo "LIBCLANG_PATH=$(dirname "$libclang_file")" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
 

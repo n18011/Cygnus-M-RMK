@@ -49,7 +49,7 @@ Tab A S D F G MouseBtn3 Up H J K LT(3,L) LT(scroll,Semicolon) Enter
 
 LShift Z X C V B Delete Down N M Comma Dot Slash RShift
 
-LCtrl LGui LAlt Language5 Left LT(1,Space) Right Backspace LT(2,Enter) Delete RCtrl
+LCtrl LGui LAlt TG(5) Left LT(1,Space) Right Backspace LT(2,Enter) Delete RCtrl
 """
 encoders = [["MouseWheelDown", "MouseWheelUp"]]
 

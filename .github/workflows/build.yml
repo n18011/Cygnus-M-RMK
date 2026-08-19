@@ -19,7 +19,19 @@ jobs:
           set -euo pipefail
 
           find_libclang() {
-            find /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu \
+            local latest_llvm_lib
+            latest_llvm_lib="$(
+              find /usr/lib/llvm-*/lib \
+                -maxdepth 1 \
+                \( -name 'libclang.so*' -o -name 'libclang-[0-9]*.so*' \) \
+                -print 2>/dev/null | sort -V -r | head -n 1 || true
+            )"
+            if [[ -n "$latest_llvm_lib" ]]; then
+              printf '%s\n' "$latest_llvm_lib"
+              return
+            fi
+
+            find /usr/lib/x86_64-linux-gnu \
               -maxdepth 1 \
               \( -name 'libclang.so*' -o -name 'libclang-[0-9]*.so*' \) \
               -print -quit 2>/dev/null || true

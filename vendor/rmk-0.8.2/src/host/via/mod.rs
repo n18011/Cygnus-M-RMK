@@ -222,8 +222,10 @@ impl<
             ViaCommand::EepromReset => {
                 warn!("Reseting storage..");
                 #[cfg(feature = "storage")]
-                FLASH_CHANNEL.send(FlashOperationMessage::Reset).await
-                // TODO: Reboot after a eeprom reset?
+                FLASH_CHANNEL.send(FlashOperationMessage::Reset).await;
+                // Re-read the default keymap and behavior configuration after
+                // clearing storage instead of continuing with stale RAM state.
+                boot::reboot_keyboard();
             }
             ViaCommand::BootloaderJump => {
                 warn!("Bootloader jumping");

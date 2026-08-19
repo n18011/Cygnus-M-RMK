@@ -16,6 +16,16 @@ vial_enabled = true
 # Vial lock解除用。Central側の右手ホーム寄りキー (row=0,col=7/8)
 unlock_keys = [[0, 7], [0, 8]]
 
+# RMKの永続設定領域。左右のnRF52840はそれぞれの内部Flashに保存します。
+# clear_storageは初回移行・障害復旧時だけtrueにして一度書き込み、
+# 起動後にfalseへ戻してください（キーマップ、BLE bond、split peer等を消去します）。
+[storage]
+enabled = true
+start_addr = 0xA0000
+num_sectors = 32
+clear_storage = true
+clear_layout = false
+
 [layout]
 rows = 4
 cols = 13

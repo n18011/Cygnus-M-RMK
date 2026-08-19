@@ -52,6 +52,27 @@ Vial Web は USB ケーブルを右側の Central (`Cygnus_R`) に接続して�
 既存の保存済みキーマップがある場合はデフォルト設定より優先されるため、スクロールキーを
 `LT(scroll,Semicolon)` に設定するか、キーマップを初期化してください。
 
+## ストレージの初期化
+
+RMK は Vial のキーマップ、動作設定、BLE bond、split peer 情報などを XIAO の内部 Flash に
+保存します。UF2 を上書きしてもこの領域は通常消去されないため、`keyboard.toml` の変更が
+反映されない、または旧ファームウェアの状態が残っているように見えることがあります。
+
+このプロジェクトのRMK 0.8.2ベンダー版には、現在のファームウェアの build hash と保存値が
+異なるとストレージを再初期化する修正を適用しています。通常は新しいUF2を左右両方へ書き込めば、
+各側が一度だけ初期化されます。BLE bondも消えるため、初期化後はホストとのペアリングをやり直してください。
+
+確実に全消去する場合は、公式の `clear_storage` 手順を使います。
+
+1. `keyboard.toml` の `[storage]` で `clear_storage = true` にして、`cargo make uf2 --release` を実行する。
+2. 生成した `central` と `peripheral` をそれぞれ右側・左側へ書き込み、両方を一度起動する。
+3. `clear_storage = false` に戻して再ビルド・再書き込みする。trueのままだと毎回起動時に消去されます。
+
+Vial の EEPROM Reset（設定初期化）が使える場合も同じストレージを消去できます。このRMK版では
+消去後に自動再起動するため、デフォルトキーマップを読み直します。公式の仕様は
+[RMK Storage](https://rmk.rs/main/docs/configuration/storage) と
+[RMK FAQ](https://rmk.rs/main/docs/getting_started/faq) を参照してください。
+
 ## 移植時の差分
 
 - BLE では PMW3610 が生成する移動レポートの方が送信より速く、古いカーソル位置が

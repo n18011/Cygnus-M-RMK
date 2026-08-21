@@ -24,6 +24,35 @@
 ピン名は XIAO BLE の D ピンではなく、nRF52840 の GPIO 名で記述しています。
 元の ZMK 配線では `col2row` だったため、RMK でも `row2col = false` にしています。
 
+## RGB LED
+
+ZMK の `zmk-rgbled-widget` の状態表示を、RMK の `Controller` / `PollingController` で
+3本のGPIOへ移植しています。RGB LEDはactive-lowとして、次のピンを使用します。
+
+| 色 | GPIO | 点灯レベル |
+| --- | --- | --- |
+| Red | `P0_26` | Low |
+| Green | `P0_30` | Low |
+| Blue | `P0_06` | Low |
+
+ファームウェアは初期状態をHigh（消灯）にして、RMKの`CONTROLLER_CHANNEL`を50 ms周期で
+購読・更新します。
+
+| 状態 | 表示 |
+| --- | --- |
+| Battery 0% / 1–19% / 20–79% / 80%以上 | Magenta / Red / Yellow / Green |
+| Batteryが1–5%へ遷移 | Redを3回点滅 |
+| Central: BLE advertising / connected / disconnected | Yellow / Blue / Red |
+| Central: USB接続 | Cyan |
+| Peripheral: Centralとのsplitリンク切断 / 接続 | Red / Blue |
+| CentralのLayer Nへの変更 | CyanをN回点滅（Base layer 0は点滅なし） |
+| Charging / Sleep | Green / 消灯 |
+
+LayerイベントはRMKのsplit同期でPeripheralにも届きますが、ZMK widgetと同じくPeripheralでは
+無視します。RGBの状態機械は [src/rgb_led_state.rs](src/rgb_led_state.rs)、GPIO Controllerは
+[src/rgb_led.rs](src/rgb_led.rs) にあります。active-highのLED基板を使う場合は、GPIO初期値と
+`apply_color`の極性を合わせて変更してください。
+
 ## ビルドと書き込み
 
 Rust、`thumbv7em-none-eabihf` ターゲット、`cargo-make`、`clang/libclang` を準備したうえで実行します。
@@ -66,7 +95,8 @@ Vial Web は USB ケーブルを右側の Central (`Cygnus_R`) に接続して�
 - `BT_CLR_ALL` は RMK の `User9`（`CLR_PEER`、長押し 5 秒で split peer の bond を消去）に割り当て、
   `BT0`～`BT4` は `User0`～`User4`、`BT_NEXT`/`BT_PREV` は `User5`/`User6` に移しました。
 - ZMK の `&kt KP_N4` は RMK 0.8.2 に対応するキー・トグルがないため、通常の `Kp4` にしています。
-- 元リポジトリの RGB adapter / Studio RPC は RMK 版では未設定です。
+- 元リポジトリの RGB adapter / Studio RPC は移植せず、3色GPIOの状態表示をRMK Controllerで
+  自作しています。
 
 RMK の分割キーボード設定は [公式ドキュメント](https://rmk.rs/docs/configuration/split_keyboard)、
 PMW3610 の設定は [入力デバイスのドキュメント](https://rmk.rs/docs/configuration/input_device/pmw3610)

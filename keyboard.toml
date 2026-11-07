@@ -17,12 +17,15 @@ vial_enabled = true
 unlock_keys = [[0, 7], [0, 8]]
 
 # RMKの永続設定領域。左右のnRF52840はそれぞれの内部Flashに保存します。
+# 標準の非defmt rmk-boot（swap と noswap）がストレージに使う末尾 32 KiB。
+# defmt ブートローダと dfu_ext はこのアドレスではない。USB ID からは判別できない。
+# 旧 0xA0000 / 128 KiB は標準レイアウトの DFU スロット（0x7F000..0xF8000）と重なる。
 # clear_storageは初回移行・障害復旧時だけtrueにして一度書き込み、
 # 起動後にfalseへ戻してください（キーマップ、BLE bond、split peer等を消去します）。
 [storage]
 enabled = true
-start_addr = 0xA0000
-num_sectors = 32
+start_addr = 0xF8000
+num_sectors = 8
 clear_storage = false
 clear_layout = false
 

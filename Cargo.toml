@@ -13,6 +13,8 @@ license = "MIT OR Apache-2.0"
 rmk = { version = "=0.8.2", features = [
     "nrf52840_ble",
     "split",
+    # Writes GPREGRET 0x57 before a soft reset. rmk-boot treats that as its
+    # own USB DFU request; it is not an Adafruit-only signal.
     "adafruit_bl",
 ] }
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc", rev = "11d5c3c", features = [

@@ -1,6 +1,7 @@
 #![no_main]
 #![no_std]
 
+mod boot_state;
 mod rgb_led;
 mod rgb_led_state;
 

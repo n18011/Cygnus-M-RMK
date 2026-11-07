@@ -53,7 +53,7 @@ LayerイベントはRMKのsplit同期でPeripheralにも届きますが、ZMK wi
 [src/rgb_led.rs](src/rgb_led.rs) にあります。active-highのLED基板を使う場合は、GPIO初期値と
 `apply_color`の極性を合わせて変更してください。
 
-## ビルドと書き込み
+## ビルド
 
 Rust、`thumbv7em-none-eabihf` ターゲット、`cargo-make`、`clang/libclang` を準備したうえで実行します。
 
@@ -64,13 +64,47 @@ Ubuntu系では、事前に `sudo apt install clang libclang-dev` を実行し�
 cd Cygnus-M-RMK
 rustup target add thumbv7em-none-eabihf
 cargo install --force cargo-make
-cargo make uf2 --release
+cargo make bin --release
 ```
 
-生成された UF2 のうち `central` を右側（`Cygnus_R`）へ、`peripheral` を左側（`Cygnus_L`）へ書き込みます。
-XIAO のブートローダーが UF2 に対応していることを確認してください。RMK 0.7 以降へ
-移行する際は BLE スタックが変わるため、ZMK へ戻す場合にブートローダーの再書き込みが
-必要になることがあります。
+`cargo make bin --release` は dfu-util 用の生バイナリを出します。
+
+- `Cygnus-M-RMK-central.bin` … 右側 Central
+- `Cygnus-M-RMK-peripheral.bin` … 左側 Peripheral
+
+この二つのリンクアドレスは `memory.x` の ACTIVE `0x7000` です。これは rmk-boot の
+標準レイアウト（非 defmt の swap、および同じ ACTIVE 原点を使う非 defmt の noswap）向けの
+**候補**です。`1209:0001` という USB ID だけでは、実機が swap / noswap / `dfu_ext` /
+defmt のどれかを証明しません。defmt ブートローダは 32 KiB で ACTIVE が後ろへずれ、
+`dfu_ext` は外部 SPI を DFU に使います。どちらもこの `memory.x` とは違います。
+
+Makefile は引き続き UF2 と HEX も生成できます。それらを dfu-util の入力にしてはいけません。
+dfu-util に渡すのは上記 `.bin` だけです。
+
+### 書き込み前提
+
+実機のブートローダ配置が標準の非 defmt rmk-boot だと確認できるまで、書き込まないでください。
+配置が違うと ACTIVE の先頭が `0x7000` ではなく、起動しないか、noswap では直接 ACTIVE を
+上書きします。swap ならブートローダがロールバックできることがありますが、それは保証ではありません。
+
+前提を自分で受け入れた場合だけ、ブートローダの USB DFU（`1209:0001`、alt 0）に対して次の形です。
+アプリの `4c4b:4643` には DFU インターフェースがありません。RMK 0.8.2 には `dfu_nrf` がありません。
+
+```sh
+# 右側。Vial の Security → Reboot to bootloader で 1209:0001 が出ている間
+dfu-util -d 1209:0001 -a 0 -D Cygnus-M-RMK-central.bin
+```
+
+左側の peripheral ファームは USB デバイスを出しません。Vial のブートローダ操作がリセットするのは
+右側の Central だけです。左側を更新するには、左側のチップ自身の rmk-boot が DFU になっている
+必要があります。rmk-boot の文書ではリセットピンの二度押しです。左側に同じブートローダがあるかは
+未確認です。
+
+swap モードでは、起動したアプリが状態ページ先頭の `SWAP_MAGIC`（`0xF0F0F0F0`）を
+`BOOT_MAGIC`（`0xD0D0D0D0`）へ変えないと、次のリセットでロールバックします。
+`src/boot_state.rs` はその 1 ワードだけを、消去せずに書き換えます。別の値が入っている
+アドレス（ブートローダ本体など）には書きません。defmt ビルドの状態ページは `0x6000` ではないため、
+この確認は届きません。
 
 ## Vial Web
 
@@ -84,17 +118,17 @@ Vial Web は USB ケーブルを右側の Central (`Cygnus_R`) に接続して�
 ## ストレージの初期化
 
 RMK は Vial のキーマップ、動作設定、BLE bond、split peer 情報などを XIAO の内部 Flash に
-保存します。UF2 を上書きしてもこの領域は通常消去されないため、`keyboard.toml` の変更が
-反映されない、または旧ファームウェアの状態が残っているように見えることがあります。
+保存します。標準レイアウトでは末尾の `0xF8000` から 32 KiB（8 セクタ）です。アプリ本体の
+DFU 上書きはこの領域を通常消しません。以前の `0xA0000` にあった保存値は読みません。
 
 このプロジェクトのRMK 0.8.2ベンダー版には、現在のファームウェアの build hash と保存値が
-異なるとストレージを再初期化する修正を適用しています。通常は新しいUF2を左右両方へ書き込めば、
-各側が一度だけ初期化されます。BLE bondも消えるため、初期化後はホストとのペアリングをやり直してください。
+異なるとストレージを再初期化する修正を適用しています。新しい `.bin` を左右へ書き込んで起動すると、
+各側が一度初期化されます。BLE bond も消えるため、初期化後はホストとのペアリングをやり直してください。
 
 確実に全消去する場合は、公式の `clear_storage` 手順を使います。
 
-1. `keyboard.toml` の `[storage]` で `clear_storage = true` にして、`cargo make uf2 --release` を実行する。
-2. 生成した `central` と `peripheral` をそれぞれ右側・左側へ書き込み、両方を一度起動する。
+1. `keyboard.toml` の `[storage]` で `clear_storage = true` にして、`cargo make bin --release` を実行する。
+2. 生成した `central` と `peripheral` の `.bin` を、それぞれ右側・左側のブートローダ DFU へ書き込み、両方を一度起動する。
 3. `clear_storage = false` に戻して再ビルド・再書き込みする。trueのままだと毎回起動時に消去されます。
 
 Vial の EEPROM Reset（設定初期化）が使える場合も同じストレージを消去できます。このRMK版では

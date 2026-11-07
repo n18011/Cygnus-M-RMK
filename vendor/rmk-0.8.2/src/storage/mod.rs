@@ -532,6 +532,12 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
             }
         }
 
+        // After storage init succeeds far enough to return. A crash before this
+        // leaves SWAP_MAGIC set, so rmk-boot can revert. This is not dfu_nrf's
+        // mark_booted(); RMK 0.8.2 has no that API. It only programs the same
+        // 4-byte embassy-boot 0.7 magic, via the MPSL flash driver.
+        crate::boot::confirm_embassy_boot_swap(&mut storage.flash).await;
+
         storage
     }
 
